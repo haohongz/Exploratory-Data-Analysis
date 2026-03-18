@@ -1,7 +1,9 @@
 ---
 title: "Project 1"
-author: "GROUP MEMBERS"
-output: html_document
+author: "Haohong Zheng(haohongz)"
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -29,12 +31,37 @@ Your job in this project falls into two categories:
     * Call the first table `daily`: "./data/natural_gas_germany_daily.csv"
     * Call the second table `gas`: "./data/dutch_ttf_natural_gas.csv". Be sure to properly import the `Date` column.
     * Demonstrate that these have been loaded by showing the number of rows and columns in each table.
-  
+
+#### Answer Task 1
+
+```{r}
+daily <- read.csv("./data/natural_gas_germany_daily.csv")
+
+gas <- read.csv("./data/dutch_ttf_natural_gas.csv")
+gas$Date <- as.Date(gas$Date, format = "%m/%d/%Y")
+
+
+cat("Daily dataset dimensions:", dim(daily)[1], "rows,", dim(daily)[2], "columns\n")
+cat("Gas dataset dimensions:", dim(gas)[1], "rows,", dim(gas)[2], "columns\n")
+
+# View structure to understand the data
+str(daily)
+str(gas)
+```
+
+
 
 ### Task 2
 
 * The data in `daily` are collected over days, with information on different types of natural gas consumption (`consumption_small`, `consumption_industry`, `consumption_power`). Provide summaries of typical values for each of these three types of consumption.
 
+#### Answer Task 2
+
+```{r}
+daily |>
+  select(consumption_small, consumption_industry, consumption_power) |>
+  summary()
+```
 
 ### Task 3
 
@@ -45,32 +72,223 @@ Answer some questions about the data in `daily`:
 * What proportion of the days are marked as holidays?
 * For each month in each year, what was the year-month combination with the lowest median `consumption_power` value?
    
+#### Answer Task 3
+
+```{r}
+# Task 3 Part 1: Convert date column and calculate weeks covered
+
+daily$date <- as.Date(daily$date)
+date_range <- range(daily$date, na.rm = TRUE)
+days_covered <- as.numeric(difftime(date_range[2], date_range[1], units = "days"))
+
+weeks_covered <- round(days_covered / 7, 1)
+cat("Weeks covered:", weeks_covered, "\n")
+```
+
+```{r}
+# Task 3 Part 2: Percentage change from first day to last day
+first_values <- daily %>% filter(date == min(date)) %>%
+  select(consumption_small, consumption_industry, consumption_power)
+
+last_values <- daily %>% filter(date == max(date)) %>%
+  select(consumption_small, consumption_industry, consumption_power)
+
+pct_change <- ((last_values - first_values) / first_values) * 100
+print(pct_change)
+```
+
+```{r}
+# Task 3 Part 3: Proportion of days marked as holidays
+
+holiday_proportion <- sum(daily$holiday == 1) / nrow(daily)
+cat("Proportion of holidays:", round(holiday_proportion * 100, 2), "%\n")
+```
+
+```{r}
+# Task 3 Part 4
+daily <- daily %>%
+  mutate(year_month = floor_date(date, "month"))
+
+daily %>%
+  group_by(year_month) %>%
+  summarise(median_power = median(consumption_power, na.rm = T)) %>%
+  arrange(median_power) %>%
+  slice(1)
+
+```
+
 ### Task 4
 
 * The original paper aggregated the data to monthly means for each consumption type in `daily` and the `Price` column of `gas` to produce the following image:<br/>
 ![Original consumption by month graph](proj1fig1.png)<br/>
 Produce plots that show the same information that is presented in this plot. Your plots do not have to have the same colors or markings, but we should be able to use them to compare the trends for the three price variables. 
 
+#### Answer Task 4
+
+```{r}
+# Monthly price aggregates
+gas_monthly <- gas %>%
+  mutate(year_month = floor_date(Date, "month")) %>%
+  group_by(year_month) %>%
+  summarise(price_ttf = mean(Price, na.rm = T), .groups = "drop")
+
+daily_monthly_price <- daily %>%
+  group_by(year_month) %>%
+  summarise(price_industry = mean(price_industry_idx, na.rm = T),
+            price_household = mean(price_households_idx, na.rm = T), .groups = "drop")
+
+# Join and plot
+daily_monthly_price %>%
+  inner_join(gas_monthly, by = "year_month") %>%
+  pivot_longer(-year_month, names_to = "variable", values_to = "value") %>%
+  ggplot(aes(x = year_month, y = value, color = variable)) +
+  geom_line(linewidth = 0.8) +
+  labs(title = "Natural Gas Price Trends",
+       x = "Date", y = "Price / Index Value", color = "Variable") +
+  theme_minimal() + theme(legend.position = "bottom")
+```
+
+
 ### Task 5
 
 * Write a predicate function that returns true if any value in vector is missing. Use this function to find columns with missing values in the `daily` column. Create a plot or table that shows how often patterns of missingness occur: are all of the missing values in the same rows or are the various columns missing data in different ways?
 
+#### Answer Task 5
+```{r}
+has_missing <- function(x) any(is.na(x))
+daily %>% select(where(has_missing)) %>% names()
 
+daily %>%
+  summarise(across(everything(), ~sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "column", values_to = "missing_count") %>%
+  filter(missing_count > 0) %>%
+  ggplot(aes(x = reorder(column, -missing_count), y = missing_count)) +
+  geom_col(fill = "steelblue") +
+  labs(title = "Missing Values by Column", x = "Column", y = "Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
 
 ### Task 6
 
 * Limit the `gas` table to days where the price exceeded the yearly median. Use the concept of [circular means](https://en.wikipedia.org/wiki/Circular_mean) to compute the average day of the year when price exceeds the yearly median price. The `yday` function will likely be useful here. 
+
+#### Answer Task 6
+```{r}
+# Task 6: Circular mean of days when price exceeds yearly median
+
+# Add year and day of year columns to gas
+gas <- gas %>%
+  mutate(
+    year = year(Date),
+    yday = yday(Date)
+  )
+
+# Calculate yearly median for each year
+yearly_medians <- gas %>%
+  group_by(year) %>%
+  summarise(yearly_median = median(Price, na.rm = TRUE))
+
+# Join back and filter for above-median days
+high_price_days <- gas %>%
+  left_join(yearly_medians, by = "year") %>%
+  filter(Price > yearly_median)
+
+cat("Number of days with price above yearly median:", nrow(high_price_days), "\n")
+
+# Function to calculate circular mean
+circular_mean <- function(angles_degrees) {
+  angles_rad <- angles_degrees * pi / 180
+  mean_x <- mean(cos(angles_rad), na.rm = TRUE)
+  mean_y <- mean(sin(angles_rad), na.rm = TRUE)
+  mean_rad <- atan2(mean_y, mean_x)
+  mean_deg <- mean_rad * 180 / pi
+  if(mean_deg < 0) mean_deg <- mean_deg + 360
+  return(mean_deg)
+}
+
+# Convert day of year to angle (0-360 degrees)
+high_price_days <- high_price_days %>%
+  mutate(angle = (yday / 366) * 360)
+
+# Calculate circular mean
+circular_mean_angle <- circular_mean(high_price_days$angle)
+circular_mean_yday <- (circular_mean_angle / 360) * 365
+
+cat("\nCircular mean day of year:", round(circular_mean_yday))
+cat("\nApproximately:", format(as.Date(circular_mean_yday - 1, origin = "2022-01-01"), "%B %d"))
+
+# Quick histogram to visualize
+ggplot(high_price_days, aes(x = yday)) +
+  geom_histogram(bins = 30, fill = "steelblue", alpha = 0.7) +
+  geom_vline(xintercept = circular_mean_yday, color = "red", size = 1) +
+  labs(
+    title = "Distribution of Days with Above-Median Prices",
+    subtitle = paste("Circular mean at day", round(circular_mean_yday)),
+    x = "Day of Year",
+    y = "Count"
+  ) +
+  theme_minimal()
+```
 
 
 ### Task 7
 
 * Using the cut function, create two nominal variables from quantitative data in the `daily` dataset. Use these groups to summarize the data. Use arrange to show the smallest or largest values in these comparisons.
 
+
+```{r}
+daily <- daily %>%
+  mutate(temp_celsius = temperature - 273.15,
+         temp_category = cut(temp_celsius,
+           breaks = c(-Inf, 0, 5, 10, 15, 20, Inf),
+           labels = c("<0°C","0-5°C","5-10°C","10-15°C","15-20°C",">20°C")),
+         industry_category = cut(consumption_industry,
+           breaks = quantile(consumption_industry, probs = c(0, 0.33, 0.67, 1), na.rm = T),
+           labels = c("Low","Medium","High"), include.lowest = T))
+
+daily %>%
+  group_by(temp_category) %>%
+  summarise(avg_small = mean(consumption_small, na.rm = T),
+            avg_industry = mean(consumption_industry, na.rm = T),
+            count = n()) %>%
+  arrange(desc(avg_small))
+
+daily %>%
+  group_by(temp_category, industry_category) %>%
+  summarise(avg_power = mean(consumption_power, na.rm = T), .groups = "drop") %>%
+  arrange(desc(avg_power))
+```
+
+
 ### Task 8
 
 * There are several variables that pull out data by different industry (the `_idx` columns). Create a table for these columns using `select` and the `ends_with` function. Provide two different plots that show of the relations between these variables (you do not need to have all variables in each plot).
 
+#### Answer Task 8
+```{r}
+idx_columns <- daily %>% select(date, ends_with("_idx"))
+names(idx_columns)
+idx_columns %>% select(-date) %>% summary()
+```
 
+```{r}
+# Plot 1: Time series
+idx_columns %>%
+  pivot_longer(-date, names_to = "index", values_to = "value") %>%
+  mutate(index = gsub("_idx", "", index)) %>%
+  ggplot(aes(x = date, y = value, color = index)) +
+  geom_line(alpha = 0.7) +
+  labs(title = "Economic Indices Over Time") +
+  theme_minimal() + theme(legend.position = "bottom")
+
+# Plot 2: Scatterplot
+ggplot(idx_columns, aes(x = manufacturing_idx, y = hospitality_idx)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", color = "red") +
+  labs(title = "Manufacturing vs Hospitality Index") +
+  theme_minimal()
+```
 ## Objectives
 
 ### Objective 1
@@ -82,34 +300,193 @@ Produce plots that show the same information that is presented in this plot. You
     * A plot using `facet_wrap` or `facet_grid`
     * A plot that shows seasonal effects before the crisis (September 2021 until October 2022)
     
+```{r}
+# 1. Marginal distribution
+ggplot(daily, aes(x = consumption_small)) +
+  geom_histogram(bins = 30, fill = "steelblue", na.rm = T) +
+  labs(title = "Distribution of Small Consumer Consumption") + theme_minimal()
+```
+
+**Explaining:**
+Bimodal distribution reflecting the difference between winter and summer usage.
+
+```{r}
+# 2. Joint distribution
+ggplot(daily, aes(x = temp_celsius, y = consumption_small)) +
+  geom_point(alpha = 0.2, na.rm = T) +
+  labs(title = "Temp vs Small Consumer Consumption") + theme_minimal()
+```
+**Explaining:**
+Strong nonlinear negative relationship — consumption spikes as temperature drops.
+
+```{r}
+# 3. Conditional mean - solar radiation vs power consumption
+daily %>%
+  mutate(solar_group = cut(solar_radiation, breaks = 5)) %>%
+  group_by(solar_group) %>%
+  summarise(avg_power = mean(consumption_power, na.rm = T)) %>%
+  ggplot(aes(x = solar_group, y = avg_power)) +
+  geom_col(fill = "coral") +
+  labs(title = "Mean Power Consumption by Solar Radiation Level",
+       x = "Solar Radiation Group", y = "Mean Power Consumption") + theme_minimal()
+```
+**Explaining:**
+Higher solar radiation is associated with lower gas power consumption, likely because solar energy reduces the need for gas-based electricity generation.
+
+```{r}
+# 4. Facet plot
+daily %>%
+  select(date, consumption_small, consumption_industry, consumption_power) %>%
+  pivot_longer(-date, names_to = "type", values_to = "val") %>%
+  ggplot(aes(x = date, y = val)) +
+  geom_line(alpha = 0.4) +
+  facet_wrap(~type, scales = "free_y", ncol = 1) +
+  labs(title = "Daily Consumption by Sector") + theme_minimal()
+```
+**Explaining:**
+Household consumption is the most volatile, industry is the most stable, and power is in between.
+
+```{r}
+# 5. Pre-crisis seasonal pattern
+daily %>%
+  filter(date < as.Date("2021-09-01")) %>%
+  mutate(yday = yday(date)) %>%
+  ggplot(aes(x = yday, y = consumption_small)) +
+  geom_smooth(method = "loess", na.rm = T) +
+  labs(title = "Pre-Crisis Seasonal Pattern (Small Consumers)", x = "Day of Year") + theme_minimal()
+```
+**Explaining:**
+Clear U-shape: high in winter months, low in summer. This is the baseline seasonal pattern before the crisis disrupted normal consumption.
 
 ### Objective 2
 
 * Compare and contrast holidays and non-holidays for household energy consumption. Select 3 ways of comparing these groups. Provide at least one graph.
 
+```{r}
+# Comparison 1: mean and median
+daily %>% group_by(holiday) %>%
+  summarise(mean = mean(consumption_small, na.rm = T),
+            median = median(consumption_small, na.rm = T))
+
+# Comparison 2: t-test
+t.test(consumption_small ~ holiday, data = daily)
+
+# Comparison 3: boxplot
+ggplot(daily, aes(x = factor(holiday), y = consumption_small)) +
+  geom_boxplot(fill = c("lightblue","salmon"), na.rm = T) +
+  labs(title = "Holiday vs Non-Holiday", x = "Holiday (0=No, 1=Yes)") + theme_minimal()
+```
+**Explaining:**
+Holiday and non-holiday consumption are very similar (means of 1.04 vs 1.07). The t-test p-value of 0.73 confirms no significant difference, meaning holidays alone don't meaningfully affect household gas usage.
+
 ### Objective 3
 
 * According to the paper, the gas crisis occurred between September 2021 until October 2022. Compare this period with the periods before and after on household and industrial consumption. Write a paragraph explaining your findings.
+```{r}
+# before gas crisis
+# gas crisis: 2021-22 
+# after gas crisis
 
+# 1. split up the 'daily' into 3 time periods
 
-### Objective 4
+daily$date <- as.Date(daily$date, format = "%Y-%m-%d")
+
+before_crisis <- daily[daily$date <= as.Date("2021-08-31"), ]
+crisis <- daily[
+  daily$date >= as.Date("2021-09-01") &
+  daily$date <= as.Date("2022-09-30"),
+]
+after_crisis <- daily[daily$date >= as.Date("2022-10-01"), ]
+
+# 2. create summary stats for all the categories in this period
+summary_stats <- data.frame(
+  period = c("Before", "During", "After"),
+  small = c(mean(before_crisis$consumption_small, na.rm = T),
+            mean(crisis$consumption_small, na.rm = T),
+            mean(after_crisis$consumption_small, na.rm = T)),
+  industry = c(mean(before_crisis$consumption_industry, na.rm = T),
+               mean(crisis$consumption_industry, na.rm = T),
+               mean(after_crisis$consumption_industry, na.rm = T))
+)
+summary_stats$period <- factor(summary_stats$period, levels = c("Before","During","After"))
+print(summary_stats)
+
+# 3. bar plots
+summary_stats %>%
+  pivot_longer(-period, names_to = "type", values_to = "value") %>%
+  ggplot(aes(x = period, y = value, fill = type)) +
+  geom_col(position = "dodge") +
+  labs(title = "Average Consumption Before, During, and After Crisis",
+       x = "Period", y = "Mean Consumption", fill = "Sector") +
+  theme_minimal()
+```
+
+**Explaining Findings: **
+Industrial consumption declined steadily across all three periods, suggesting lasting structural changes. Household consumption dropped during the crisis but rebounded after, likely due to winter heating demand or stabilized prices. Industry's savings were persistent while households' were temporary, consistent with the paper's 23% below-baseline finding.
+
+### Objective 4a
 
 * Explore the [documentation for ggplot](https://ggplot2.tidyverse.org/). Select one geometery and one `stat_` function we have not used before or use an option to a previously used geometry/stat with a new option. Write a short paragraph explaining what the plots show. 
+```{r}
+ggplot(daily, aes(x = consumption_industry)) +
+  stat_ecdf(color = "darkred") +
+  labs(title = "ECDF of Industrial Consumption") + theme_minimal()
 
-### Objective 4
+ggplot(daily, aes(x = factor(month), y = consumption_industry)) +
+  geom_violin(fill = "lightblue", na.rm = T) +
+  labs(title = "Industrial Consumption by Month", x = "Month") + theme_minimal()
+```
+
+**Explaining Findings: **
+This uses `stat_ecdf`, a stat function not used elsewhere. The S-shaped curve shows most industrial consumption falls between 0.8 and 1.6, with the median around 1.2. The flat tails indicate very few days with extremely low or high consumption, meaning industrial usage is fairly stable day-to-day.
+
+Geom_violin shows distribution shape per month — winter months have wider spreads at higher values, while summer is concentrated lower.
+
+### Objective 4b
 
 * Investigate solar radiation's marginal distribution and also it's relationship with temperature.
 
+```{r}
+ggplot(daily, aes(x = solar_radiation)) +
+  geom_histogram(bins = 30, fill = "gold", na.rm = T) + theme_minimal()
+
+ggplot(daily, aes(x = solar_radiation, y = temp_celsius)) +
+  geom_point(alpha = 0.2, na.rm = T) +
+  geom_smooth(na.rm = T) + theme_minimal()
+```
+
+**Explaining Findings: **
+Solar radiation is right-skewed with most days having low values, typical for Germany's cloudy climate. It has a positive nonlinear relationship with temperature — more sun means warmer days, but the effect flattens above 20°C.
 
 ### Objective 5
 
 * Use `group_by` to summarize by a new feature of this data set not otherwise discussed in the tasks or objectives. What have you learned with these investigation?
 
+```{r}
+daily %>%
+  mutate(wday = wday(date, label = T)) %>%
+  group_by(wday) %>%
+  summarise(small = mean(consumption_small, na.rm = T),
+            industry = mean(consumption_industry, na.rm = T))
+```
+
+**find:**
+Industrial consumption is clearly higher on weekdays (Mon-Fri ~1.20-1.25) and drops on weekends (Sat-Sun ~1.08-1.11), reflecting factory schedules. Household consumption is more stable across the week, only slightly lower on weekends. This shows industry drives the weekly consumption cycle.
+
 ### Objective 6
 
 * Based on your exploration of the data, suggest three questions that could be asked from these data or additional data that you can imagine. Be sure to explain why the previous plots or calculations indicates that this would be an interesting our useful exploration.
+
+
+**1.**How elastic is household consumption to gas price? The Objective 3 bar plot showed households rebounded after the crisis while industry didn't, suggesting different price sensitivity. Quantifying this with a regression could clarify how much price drives household behavior.
+
+**2.**Does temperature explain the post-crisis household rebound? The joint distribution plot (Obj 1) showed a strong temp-consumption link. The post-crisis household increase might just be seasonal, so controlling for temperature would reveal if true savings persisted.
+
+**3.**Which industries cut consumption the most during the crisis? The _idx columns (Task 8) showed manufacturing and hospitality move differently. Combining these with industrial consumption data could identify which sectors contributed most to the overall reduction.
 
 ### Objective 7
 
 * Write an abstract for your project. Briefly explain what you did, what you found, and why a potential reader should be interested in your research.
 
+**Explain:**
+This project analyzes daily natural gas consumption in Germany from 2017 to 2023, covering household, industrial, and power sectors alongside Dutch TTF gas prices. We explored seasonal patterns, temperature effects, holiday impacts, and the 2022 energy crisis. Key findings include: industry reduced consumption early and persistently, while household savings were temporary and rebounded post-crisis. Temperature and day-of-week are strong drivers of consumption. These results confirm the original paper's findings and highlight the different ways consumer groups respond to energy shocks.
