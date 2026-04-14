@@ -1,6 +1,6 @@
-# 📊 DATASCI 306 — Project : Exploratory Data Analysis
+# 📊 Exploratory Data Analysis
 
-> Data Science 306, Winter 2025, University of Michigan
+> Data Science 306, Winter 2026, University of Michigan
 
 ---
 
